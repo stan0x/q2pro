@@ -27,7 +27,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 // common.h -- definitions common between client and server, but not game.dll
 //
 
-#define PRODUCT         "Q2PRO"
+#define PRODUCT         "Q2PRO+"
 
 #if USE_CLIENT
 #define APPLICATION     "q2pro+"
