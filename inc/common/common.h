@@ -30,9 +30,9 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define PRODUCT         "Q2PRO"
 
 #if USE_CLIENT
-#define APPLICATION     "q2pro"
+#define APPLICATION     "q2pro+"
 #else
-#define APPLICATION     "q2proded"
+#define APPLICATION     "q2proded+"
 #endif
 
 #define COM_DEFAULT_CFG     "default.cfg"
