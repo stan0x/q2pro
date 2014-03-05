@@ -1200,7 +1200,7 @@ static void scr_crosshair_changed(cvar_t *self)
         R_GetPicSize(&w, &h, scr.crosshair_pic);
 
         // prescale
-        scale = Cvar_ClampValue(ch_scale, 0.1f, 9.0f);
+        scale = Cvar_ClampValue(ch_scale, 0.1f, 9.0f) * scr.hud_scale;
         scr.crosshair_width = w * scale;
         scr.crosshair_height = h * scale;
         if (scr.crosshair_width < 1)
@@ -1319,6 +1319,8 @@ static void scr_font_changed(cvar_t *self)
 static void scr_scale_changed(cvar_t *self)
 {
     scr.hud_scale = R_ClampScale(self);
+
+    scr_crosshair_changed(scr_crosshair);
 }
 
 static const cmdreg_t scr_cmds[] = {
@@ -1396,6 +1398,7 @@ void SCR_Init(void)
     Cmd_Register(scr_cmds);
 
     scr_scale_changed(scr_scale);
+    scr_crosshair_changed(scr_crosshair);
 
     scr.initialized = qtrue;
 }
