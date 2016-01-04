@@ -986,7 +986,7 @@ static void SV_ExecuteUserCommand(const char *s)
         return;
     }
 
-    if (sv_client->state != cs_spawned) {
+    if (sv_client->state != cs_spawned && !sv_allow_unconnected_cmds->integer) {
         return;
     }
 
