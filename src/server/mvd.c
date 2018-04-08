@@ -159,8 +159,10 @@ static void dummy_command(void)
 static void dummy_forward_f(void)
 {
     Cmd_Shift();
-    Com_DPrintf("dummy cmd: %s %s\n", Cmd_Argv(0), Cmd_Args());
-    dummy_command();
+    if (Cmd_Argc() > 0) {
+        Com_DPrintf("dummy cmd: %s\n", Cmd_ArgsFrom(0));
+        dummy_command();
+    }
 }
 
 static void dummy_record_f(void)
@@ -1730,14 +1732,18 @@ static void accept_client(netstream_t *stream)
     gtv_client_t *client;
     netstream_t *s;
 
-    // limit number of connections from single IP
+    // limit number of connections from single IPv4 address or /48 IPv6 network
     if (sv_iplimit->integer > 0) {
         int count = 0;
 
         FOR_EACH_GTV(client) {
-            if (NET_IsEqualBaseAdr(&client->stream.address, &stream->address)) {
-                count++;
-            }
+            if (stream->address.type != client->stream.address.type)
+                continue;
+            if (stream->address.type == NA_IP && stream->address.ip.u32[0] != client->stream.address.ip.u32[0])
+                continue;
+            if (stream->address.type == NA_IP6 && memcmp(stream->address.ip.u8, client->stream.address.ip.u8, 48 / CHAR_BIT))
+                continue;
+            count++;
         }
         if (count >= sv_iplimit->integer) {
             Com_Printf("TCP client [%s] rejected: too many connections\n",

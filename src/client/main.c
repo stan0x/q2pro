@@ -183,7 +183,7 @@ static void CL_UpdateGunSetting(void)
 
     if (cl_gun->integer == -1) {
         nogun = 2;
-    } else if (cl_gun->integer == 0 || info_hand->integer == 2) {
+    } else if (cl_gun->integer == 0 || (info_hand->integer == 2 && cl_gun->integer == 1)) {
         nogun = 1;
     } else {
         nogun = 0;
@@ -689,9 +689,7 @@ void CL_ClearState(void)
 {
     S_StopAllSounds();
     CL_ClearEffects();
-#if USE_LIGHTSTYLES
     CL_ClearLightStyles();
-#endif
     CL_ClearTEnts();
     LOC_FreeLocations();
 
@@ -1130,7 +1128,7 @@ static void CL_Reconnect_f(void)
     }
 
     // issued manually at console
-    if (cls.serverAddress.type == NA_BAD) {
+    if (cls.serverAddress.type == NA_UNSPECIFIED) {
         Com_Printf("No server to reconnect to.\n");
         return;
     }
@@ -1374,10 +1372,12 @@ static void CL_ConnectionlessPacket(void)
                 break;
             }
             cls.serverProtocol = PROTOCOL_VERSION_R1Q2;
+            // fall through
         case PROTOCOL_VERSION_R1Q2:
             if (mask & 1) {
                 break;
             }
+            // fall through
         default:
             cls.serverProtocol = PROTOCOL_VERSION_DEFAULT;
             break;
@@ -1461,7 +1461,7 @@ static void CL_ConnectionlessPacket(void)
         if (anticheat) {
             MSG_WriteByte(clc_nop);
             MSG_FlushTo(&cls.netchan->message);
-            cls.netchan->Transmit(cls.netchan, 0, NULL, 3);
+            cls.netchan->Transmit(cls.netchan, 0, "", 3);
             S_StopAllSounds();
             cls.connect_count = -1;
             Com_Printf("Loading anticheat, this may take a few moments...\n");
@@ -3263,10 +3263,7 @@ run_fx:
 #if USE_DLIGHTS
         CL_RunDLights();
 #endif
-
-#if USE_LIGHTSTYLES
         CL_RunLightStyles();
-#endif
     } else if (sync_mode == SYNC_SLEEP_10) {
         // force audio and effects update if not rendering
         CL_CalcViewValues();

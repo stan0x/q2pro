@@ -1,6 +1,10 @@
 ### Q2PRO Makefile ###
 
--include .config
+ifneq ($(CONFIG_FILE),)
+    include $(CONFIG_FILE)
+else
+    -include .config
+endif
 
 ifdef CONFIG_WINDOWS
     CPU ?= x86
@@ -35,7 +39,7 @@ LIBS ?=
 
 CFLAGS_s := -iquote./inc
 CFLAGS_c := -iquote./inc
-CFLAGS_g := -iquote./inc -fno-strict-aliasing
+CFLAGS_g := -iquote./inc
 
 RCFLAGS_s :=
 RCFLAGS_c :=
@@ -57,11 +61,17 @@ ifdef CONFIG_WINDOWS
     LDFLAGS_c += -mwindows
     LDFLAGS_g += -mconsole
 
-    # Mark images as DEP and ASLR compatible on x86 Windows
+    # Mark images as DEP and ASLR compatible
+    LDFLAGS_s += -Wl,--nxcompat,--dynamicbase
+    LDFLAGS_c += -Wl,--nxcompat,--dynamicbase
+    LDFLAGS_g += -Wl,--nxcompat,--dynamicbase
+
+    # Force relocations to be generated for 32-bit .exe files and work around
+    # binutils bug that causes invalid image entry point to be set when
+    # relocations are enabled.
     ifeq ($(CPU),x86)
-        LDFLAGS_s += -Wl,--nxcompat,--dynamicbase
-        LDFLAGS_c += -Wl,--nxcompat,--dynamicbase
-        LDFLAGS_g += -Wl,--nxcompat,--dynamicbase
+        LDFLAGS_s += -Wl,--pic-executable,--entry,_mainCRTStartup
+        LDFLAGS_c += -Wl,--pic-executable,--entry,_WinMainCRTStartup
     endif
 else
     # Disable x86 features on other arches
@@ -289,9 +299,6 @@ ifndef CONFIG_NO_MENUS
     OBJS_c += src/client/ui/servers.o
     OBJS_c += src/client/ui/ui.o
 endif
-
-# Light styles are always enabled
-CFLAGS_c += -DUSE_LIGHTSTYLES=1
 
 ifndef CONFIG_NO_DYNAMIC_LIGHTS
     CFLAGS_c += -DUSE_DLIGHTS=1

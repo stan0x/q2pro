@@ -93,9 +93,9 @@ entity_update_old(centity_t *ent, const entity_state_t *state, const vec_t *orig
         || state->modelindex4 != ent->current.modelindex4
         || event == EV_PLAYER_TELEPORT
         || event == EV_OTHER_TELEPORT
-        || abs(origin[0] - ent->current.origin[0]) > 512
-        || abs(origin[1] - ent->current.origin[1]) > 512
-        || abs(origin[2] - ent->current.origin[2]) > 512
+        || fabs(origin[0] - ent->current.origin[0]) > 512
+        || fabs(origin[1] - ent->current.origin[1]) > 512
+        || fabs(origin[2] - ent->current.origin[2]) > 512
         || cl_nolerp->integer == 1) {
         // some data changes will force no lerping
         ent->trailcount = 1024;     // for diminishing rocket / grenade trails
@@ -232,14 +232,25 @@ static void entity_event(int number)
 
 static void set_active_state(void)
 {
+    cls.state = ca_active;
+
     cl.serverdelta = Q_align(cl.frame.number, CL_FRAMEDIV);
     cl.time = cl.servertime = 0; // set time, needed for demos
 #if USE_FPS
     cl.keytime = cl.keyservertime = 0;
+    cl.keyframe = cl.frame; // initialize keyframe to make sure it's valid
 #endif
-    cls.state = ca_active;
+
+    // initialize oldframe so lerping doesn't hurt anything
     cl.oldframe.valid = qfalse;
+    cl.oldframe.ps = cl.frame.ps;
+#if USE_FPS
+    cl.oldkeyframe.valid = qfalse;
+    cl.oldkeyframe.ps = cl.keyframe.ps;
+#endif
+
     cl.frameflags = 0;
+
     if (cls.netchan) {
         cl.initialSeq = cls.netchan->outgoing_sequence;
     }
@@ -925,7 +936,7 @@ static void CL_AddViewWeapon(void)
         return;
     }
 
-    if (info_hand->integer == 2) {
+    if (info_hand->integer == 2 && cl_gun->integer == 1) {
         return;
     }
 
@@ -974,7 +985,7 @@ static void CL_AddViewWeapon(void)
     }
 
     gun.flags = RF_MINLIGHT | RF_DEPTHHACK | RF_WEAPONMODEL;
-    if (info_hand->integer == 1) {
+    if ((info_hand->integer == 1 && cl_gun->integer == 1) || cl_gun->integer == 3) {
         gun.flags |= RF_LEFTHAND;
     }
 
@@ -1200,10 +1211,6 @@ void CL_CalcViewValues(void)
     cl.delta_angles[2] = LerpShort(ops->pmove.delta_angles[2], ps->pmove.delta_angles[2], lerp);
 #endif
 
-    // interpolate field of view
-    cl.fov_x = lerp_client_fov(ops->fov, ps->fov, lerp);
-    cl.fov_y = V_CalcFov(cl.fov_x, 4, 3);
-
     // don't interpolate blend color
     Vector4Copy(ps->blend, cl.refdef.blend);
 
@@ -1213,6 +1220,10 @@ void CL_CalcViewValues(void)
 
     lerp = cl.keylerpfrac;
 #endif
+
+    // interpolate field of view
+    cl.fov_x = lerp_client_fov(ops->fov, ps->fov, lerp);
+    cl.fov_y = V_CalcFov(cl.fov_x, 4, 3);
 
     LerpVector(ops->viewoffset, ps->viewoffset, lerp, viewoffset);
 
@@ -1252,9 +1263,7 @@ void CL_AddEntities(void)
 #if USE_DLIGHTS
     CL_AddDLights();
 #endif
-#if USE_LIGHTSTYLES
     CL_AddLightStyles();
-#endif
     LOC_AddLocationsToScene();
 }
 

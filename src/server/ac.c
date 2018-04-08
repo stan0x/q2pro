@@ -1112,7 +1112,7 @@ char *AC_ClientConnect(client_t *cl)
         }
     }
 
-    if (ac.ready) {
+    if (ac.ready && net_from.type == NA_IP) {
         MSG_WriteShort(15);
         MSG_WriteByte(ACC_REQUESTCHALLENGE);
         MSG_WriteData(net_from.ip.u8, 4);
@@ -1426,6 +1426,7 @@ void AC_Run(void)
     case NET_ERROR:
         Com_EPrintf("ANTICHEAT: %s to %s.\n", NET_ErrorString(),
                     NET_AdrToString(&ac.stream.address));
+        // fall through
     case NET_CLOSED:
         AC_Drop();
         break;

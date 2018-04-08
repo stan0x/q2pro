@@ -49,7 +49,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "server/server.h"
 #include "system/system.h"
 
-jmp_buf  com_abortframe;    // an ERR_DROP occured, exit the entire frame
+#include <setjmp.h>
+
+static jmp_buf  com_abortframe;    // an ERR_DROP occured, exit the entire frame
+
+static void     (*com_abort_func)(void *);
+static void     *com_abort_arg;
 
 static qboolean com_errorEntered;
 static char     com_errorMsg[MAXERRORMSG]; // from Com_Printf/Com_Error
@@ -184,6 +189,7 @@ static void Com_Redirect(const char *msg, size_t total)
         }
         memcpy(rd_buffer + rd_length, msg, length);
         rd_length += length;
+        msg += length;
         total -= length;
     }
 }
@@ -406,11 +412,7 @@ void Com_LPrintf(print_type_t type, const char *fmt, ...)
     va_end(argptr);
 
     if (type == PRINT_ERROR && !com_errorEntered && len) {
-        size_t errlen = len;
-
-        if (errlen >= sizeof(com_errorMsg)) {
-            errlen = sizeof(com_errorMsg) - 1;
-        }
+        size_t errlen = min(len, sizeof(com_errorMsg) - 1);
 
         // save error msg
         memcpy(com_errorMsg, msg, errlen);
@@ -509,6 +511,12 @@ void Com_Error(error_type_t code, const char *fmt, ...)
     // abort any console redirects
     Com_AbortRedirect();
 
+    // call custom cleanup function if set
+    if (com_abort_func) {
+        com_abort_func(com_abort_arg);
+        com_abort_func = NULL;
+    }
+
     // reset Com_Printf recursion level
     com_printEntered = 0;
 
@@ -560,6 +568,12 @@ abort:
     }
     com_errorEntered = qfalse;
     longjmp(com_abortframe, -1);
+}
+
+void Com_AbortFunc(void (*func)(void *), void *arg)
+{
+    com_abort_func = func;
+    com_abort_arg = arg;
 }
 
 #ifdef _WIN32
@@ -1024,7 +1038,7 @@ void Qcommon_Init(int argc, char **argv)
 
     Com_Printf("====== " PRODUCT " initialized ======\n\n");
     Com_LPrintf(PRINT_NOTICE, APPLICATION " " VERSION ", " __DATE__ "\n");
-    Com_Printf("http://skuller.net/q2pro/\n\n");
+    Com_Printf("https://github.com/skullernet/q2pro\n\n");
 
     time(&com_startTime);
 

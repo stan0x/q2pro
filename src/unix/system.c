@@ -65,11 +65,8 @@ void Sys_DebugBreak(void)
 unsigned Sys_Milliseconds(void)
 {
     struct timeval tp;
-    unsigned time;
-
     gettimeofday(&tp, NULL);
-    time = tp.tv_sec * 1000 + tp.tv_usec / 1000;
-    return time;
+    return tp.tv_sec * 1000UL + tp.tv_usec / 1000UL;
 }
 
 /*
@@ -90,28 +87,18 @@ void Sys_Quit(void)
 void Sys_AddDefaultConfig(void)
 {
     FILE *fp;
-    struct stat st;
-    size_t len, r;
+    size_t len;
 
     fp = fopen(SYS_SITE_CFG, "r");
     if (!fp) {
         return;
     }
 
-    if (fstat(fileno(fp), &st) == 0) {
-        len = st.st_size;
-        if (len >= cmd_buffer.maxsize) {
-            len = cmd_buffer.maxsize - 1;
-        }
-
-        r = fread(cmd_buffer.text, 1, len, fp);
-        cmd_buffer.text[r] = 0;
-
-        cmd_buffer.cursize = COM_Compress(cmd_buffer.text);
-    }
-
+    len = fread(cmd_buffer.text, 1, cmd_buffer.maxsize - 1, fp);
     fclose(fp);
 
+    cmd_buffer.text[len] = 0;
+    cmd_buffer.cursize = COM_Compress(cmd_buffer.text);
     if (cmd_buffer.cursize) {
         Com_Printf("Execing %s\n", SYS_SITE_CFG);
         Cbuf_Execute(&cmd_buffer);
@@ -182,6 +169,7 @@ void Sys_Init(void)
     signal(SIGINT, term_handler);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
     signal(SIGUSR1, hup_handler);
 
     // basedir <path>
