@@ -96,6 +96,9 @@ cvar_t  *g_features;
 
 cvar_t  *map_override_path;
 
+cvar_t  *logaddress;
+static netadr_t logaddress_adr;
+
 qboolean sv_registered;
 
 //============================================================================
@@ -2039,6 +2042,41 @@ void SV_zfree(voidpf opaque, voidpf address)
 }
 #endif
 
+static void logaddress_changed(cvar_t *self)
+{
+    if (strlen(logaddress->string) == 0) {
+        memset(&logaddress_adr, 0, sizeof logaddress_adr);
+        return;
+    }
+
+    if (!NET_StringToAdr(logaddress->string, &logaddress_adr, 27500)) {
+        Com_WPrintf("%s is not a valid logaddress.\n", logaddress->string);
+    }
+}
+
+/*
+================
+SV_ConsoleOutput
+
+Remote logging.
+================
+*/
+void SV_ConsoleOutput(const char *msg)
+{
+    char    buffer[MAX_NET_STRING];
+    size_t  len;
+
+    if (logaddress_adr.type != NA_IP)
+        return;
+
+    len = Q_scnprintf(buffer, sizeof(buffer),
+                      "\xff\xff\xff\xff%s%s",
+                      "echo",
+                      msg);
+
+    NET_SendPacket(NS_SERVER, buffer, len, &logaddress_adr);
+}
+
 /*
 ===============
 SV_Init
@@ -2146,6 +2184,10 @@ void SV_Init(void)
     g_features = Cvar_Get("g_features", "0", CVAR_ROM);
 
     map_override_path = Cvar_Get("map_override_path", "", 0);
+
+    logaddress = Cvar_Get("logaddress", "", 0);
+    logaddress->changed = logaddress_changed;
+    logaddress_changed(logaddress);
 
     init_rate_limits();
 
