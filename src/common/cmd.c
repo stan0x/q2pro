@@ -765,26 +765,25 @@ typedef struct cmd_function_s {
     char            *name;
 } cmd_function_t;
 
-static  list_t  cmd_functions;        // possible commands to execute
-static  list_t  cmd_hash[CMD_HASH_SIZE];
+static list_t   cmd_functions;      // possible commands to execute
+static list_t   cmd_hash[CMD_HASH_SIZE];
 
-static  int     cmd_argc;
-static  char    *cmd_argv[MAX_STRING_TOKENS]; // pointers to cmd_data[]
-static  char    *cmd_null_string = "";
+static int      cmd_argc;
+static char     *cmd_argv[MAX_STRING_TOKENS]; // pointers to cmd_data[]
+static char     *cmd_null_string = "";
 
 // complete command string, left untouched
-static  char    cmd_string[MAX_STRING_CHARS];
-static  size_t  cmd_string_len;
-static  size_t  cmd_string_tail;
+static char     cmd_string[MAX_STRING_CHARS];
+static int      cmd_string_len;
 
 // offsets of individual tokens into cmd_string
-static  size_t  cmd_offsets[MAX_STRING_TOKENS];
+static int      cmd_offsets[MAX_STRING_TOKENS];
 
 // sequence of NULL-terminated, normalized tokens
-static  char    cmd_data[MAX_STRING_CHARS];
+static char     cmd_data[MAX_STRING_CHARS];
 
 // normalized command arguments
-static  char    cmd_args[MAX_STRING_CHARS];
+static char     cmd_args[MAX_STRING_CHARS];
 
 int             cmd_optind;
 char            *cmd_optarg;
@@ -795,7 +794,7 @@ from_t Cmd_From(void)
     return cmd_current->from;
 }
 
-size_t Cmd_ArgOffset(int arg)
+int Cmd_ArgOffset(int arg)
 {
     if (arg < 0) {
         return 0;
@@ -806,9 +805,12 @@ size_t Cmd_ArgOffset(int arg)
     return cmd_offsets[arg];
 }
 
-int Cmd_FindArgForOffset(size_t offset)
+int Cmd_FindArgForOffset(int offset)
 {
     int i;
+
+    if (offset > cmd_string_len)
+        return cmd_argc;
 
     for (i = 1; i < cmd_argc; i++) {
         if (offset < cmd_offsets[i]) {
@@ -816,11 +818,6 @@ int Cmd_FindArgForOffset(size_t offset)
         }
     }
     return i - 1;
-}
-
-size_t Cmd_WhiteSpaceTail(void)
-{
-    return cmd_string_tail;
 }
 
 /*
@@ -1077,30 +1074,21 @@ void Cmd_PrintHint(void)
 
 void Cmd_Option_c(const cmd_option_t *opt, xgenerator_t g, genctx_t *ctx, int argnum)
 {
-    if (ctx->partial[0] == '-') {
-        for (; opt->sh; opt++) {
-            if (ctx->count >= ctx->size) {
-                break;
-            }
-            if (ctx->partial[1] == '-') {
-                if (!strncmp(opt->lo, ctx->partial + 2, ctx->length - 2)) {
-                    ctx->matches[ctx->count++] = Z_CopyString(va("--%s", opt->lo));
-                }
-            } else if (!ctx->partial[1] || opt->sh[0] == ctx->partial[1]) {
-                ctx->matches[ctx->count++] = Z_CopyString(va("-%c", opt->sh[0]));
-            }
+    int i;
+
+    for (i = 1; i < argnum; i++) {
+        if (!strcmp(cmd_argv[i], "--")) {
+            if (g)
+                g(ctx);
+            return;
         }
-    } else {
-#if 0
-        if (argnum > 1) {
-            s = cmd_argv[argnum - 1];
-        }
-#endif
-        if (g) {
-            g(ctx);
-        } else if (!ctx->partial[0] && ctx->count < ctx->size) {
-            ctx->matches[ctx->count++] = Z_CopyString("-");
-        }
+    }
+
+    if (ctx->partial[0] != '-' && g) {
+        g(ctx);
+    } else for (; opt->sh; opt++) {
+        Prompt_AddMatch(ctx, va("--%s", opt->lo));
+        Prompt_AddMatch(ctx, va("-%c", opt->sh[0]));
     }
 }
 
@@ -1290,8 +1278,8 @@ $Cvars will be expanded unless they are in a quoted token
 */
 void Cmd_TokenizeString(const char *text, qboolean macroExpand)
 {
-    int     i;
-    char    *data, *start, *dest;
+    int     i, len;
+    char    *data, *dest;
 
 // clear the args from the last string
     for (i = 0; i < cmd_argc; i++) {
@@ -1302,7 +1290,6 @@ void Cmd_TokenizeString(const char *text, qboolean macroExpand)
     cmd_argc = 0;
     cmd_string[0] = 0;
     cmd_string_len = 0;
-    cmd_string_tail = 0;
     cmd_optind = 1;
     cmd_optarg = cmd_optopt = cmd_null_string;
 
@@ -1318,24 +1305,23 @@ void Cmd_TokenizeString(const char *text, qboolean macroExpand)
         }
     }
 
-    cmd_string_len = Q_strlcpy(cmd_string, text, sizeof(cmd_string));
-    if (cmd_string_len >= sizeof(cmd_string)) {
+// strip off any trailing whitespace
+    len = strlen(text);
+    while (len > 0 && text[len - 1] <= ' ') {
+        len--;
+    }
+    if (len >= MAX_STRING_CHARS) {
         Com_Printf("Line exceeded %i chars, discarded.\n", MAX_STRING_CHARS);
         return;
     }
 
-// strip off any trailing whitespace
-    while (cmd_string_len) {
-        if (cmd_string[cmd_string_len - 1] > ' ') {
-            break;
-        }
-        cmd_string[cmd_string_len - 1] = 0;
-        cmd_string_len--;
-        cmd_string_tail++;
-    }
+// copy off text
+    memcpy(cmd_string, text, len);
+    cmd_string[len] = 0;
+    cmd_string_len = len;
 
     dest = cmd_data;
-    start = data = cmd_string;
+    data = cmd_string;
     while (cmd_argc < MAX_STRING_TOKENS) {
 // skip whitespace up to a /n
         while (*data <= ' ') {
@@ -1349,7 +1335,7 @@ void Cmd_TokenizeString(const char *text, qboolean macroExpand)
         }
 
 // add new argument
-        cmd_offsets[cmd_argc] = data - start;
+        cmd_offsets[cmd_argc] = data - cmd_string;
         cmd_argv[cmd_argc] = dest;
         cmd_argc++;
 
