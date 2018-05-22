@@ -337,6 +337,7 @@ static void CL_Record_f(void)
             return;
         case 'z':
             mode |= FS_FLAG_GZIP;
+            break;
         case 'e':
             size = MAX_PACKETLEN_WRITABLE;
             break;
@@ -1278,5 +1279,3 @@ void CL_InitDemos(void)
     Cmd_Register(c_demo);
     List_Init(&cls.demo.snapshots);
 }
-
-

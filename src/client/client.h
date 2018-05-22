@@ -562,6 +562,7 @@ void CL_CheckForPause(void);
 void CL_UpdateFrameTimes(void);
 qboolean CL_CheckForIgnore(const char *s);
 
+void cl_timeout_changed(cvar_t *self);
 
 //
 // precache.c
@@ -690,9 +691,7 @@ void V_AddLight(vec3_t org, float intensity, float r, float g, float b);
 #else
 #define V_AddLight(org, intensity, r, g, b)
 #endif
-#if USE_LIGHTSTYLES
 void V_AddLightStyle(int style, vec4_t value);
-#endif
 void CL_UpdateBlendSetting(void);
 
 
@@ -777,7 +776,6 @@ void CL_BlasterParticles(vec3_t org, vec3_t dir);
 void CL_ExplosionParticles(vec3_t org);
 void CL_BFGExplosionParticles(vec3_t org);
 void CL_BlasterTrail(vec3_t start, vec3_t end);
-void CL_QuadTrail(vec3_t start, vec3_t end);
 void CL_OldRailTrail(void);
 void CL_BubbleTrail(vec3_t start, vec3_t end);
 void CL_FlagTrail(vec3_t start, vec3_t end, int color);
@@ -795,12 +793,10 @@ cdlight_t *CL_AllocDlight(int key);
 void CL_RunDLights(void);
 void CL_AddDLights(void);
 #endif
-#if USE_LIGHTSTYLES
 void CL_ClearLightStyles(void);
 void CL_SetLightStyle(int index, const char *s);
 void CL_RunLightStyles(void);
 void CL_AddLightStyles(void);
-#endif
 
 //
 // newfx.c
@@ -809,17 +805,14 @@ void CL_AddLightStyles(void);
 void CL_BlasterParticles2(vec3_t org, vec3_t dir, unsigned int color);
 void CL_BlasterTrail2(vec3_t start, vec3_t end);
 void CL_DebugTrail(vec3_t start, vec3_t end);
-void CL_SmokeTrail(vec3_t start, vec3_t end, int colorStart, int colorRun, int spacing);
 #if USE_DLIGHTS
 void CL_Flashlight(int ent, vec3_t pos);
 #endif
 void CL_ForceWall(vec3_t start, vec3_t end, int color);
-void CL_GenericParticleEffect(vec3_t org, vec3_t dir, int color, int count, int numcolors, int dirspread, float alphavel);
 void CL_BubbleTrail2(vec3_t start, vec3_t end, int dist);
 void CL_Heatbeam(vec3_t start, vec3_t end);
 void CL_ParticleSteamEffect(vec3_t org, vec3_t dir, int color, int count, int magnitude);
 void CL_TrackerTrail(vec3_t start, vec3_t end, int particleColor);
-void CL_Tracker_Explode(vec3_t origin);
 void CL_TagTrail(vec3_t start, vec3_t end, int color);
 #if USE_DLIGHTS
 void CL_ColorFlash(vec3_t pos, int ent, int intensity, float r, float g, float b);
@@ -908,7 +901,6 @@ void    SCR_FinishCinematic(void);
 void    SCR_PlayCinematic(const char *name);
 void    SCR_BeginLoadingPlaque(void);
 void    SCR_EndLoadingPlaque(void);
-void    SCR_DebugGraph(float value, int color);
 void    SCR_TouchPics(void);
 void    SCR_RegisterMedia(void);
 void    SCR_ModeChanged(void);
@@ -922,10 +914,6 @@ void    SCR_DrawStringMulti(int x, int y, int flags, size_t maxlen, const char *
 
 void    SCR_ClearChatHUD_f(void);
 void    SCR_AddToChatHUD(const char *text);
-
-#ifdef _DEBUG
-void CL_AddNetgraph(void);
-#endif
 
 
 //

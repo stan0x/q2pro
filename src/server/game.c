@@ -766,9 +766,6 @@ static void PF_FreeTags(unsigned tag)
 
 static void PF_DebugGraph(float value, int color)
 {
-#if (defined _DEBUG) && USE_CLIENT
-    SCR_DebugGraph(value, color);
-#endif
 }
 
 //==============================================
@@ -946,4 +943,3 @@ void SV_InitGameProgs(void)
         Com_Error(ERR_DROP, "Game DLL returned bad number of max_edicts");
     }
 }
-

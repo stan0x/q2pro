@@ -158,7 +158,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define QGL_EXT_compiled_vertex_array       (1 << 3)
 #define QGL_EXT_texture_filter_anisotropic  (1 << 4)
 
-#define QGL_3_0_core_functions              (1 << 31)
+#define QGL_3_0_core_functions              (1U << 31)
 
 // ==========================================================
 
@@ -305,4 +305,3 @@ QGL_EXT_compiled_vertex_array_IMP
 extern qglGenerateMipmap_t qglGenerateMipmap;
 
 #endif  // QGL_H
-

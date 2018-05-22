@@ -17,7 +17,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 */
 
 #define AL_NO_PROTOTYPES
+
+#ifdef __APPLE__
+#include <OpenAL/al.h>
+#else
 #include <AL/al.h>
+#endif
 
 #ifndef AL_SOFT_loop_points
 #define AL_SOFT_loop_points 1
@@ -105,4 +110,3 @@ QAL_IMP
 
 qboolean QAL_Init(void);
 void QAL_Shutdown(void);
-

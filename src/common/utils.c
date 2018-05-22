@@ -245,7 +245,7 @@ unsigned Com_ParseExtensionString(const char *s, const char *const extnames[])
         for (i = 0; extnames[i]; i++) {
             l2 = strlen(extnames[i]);
             if (l1 == l2 && !memcmp(s, extnames[i], l1)) {
-                mask |= 1 << i;
+                mask |= 1U << i;
                 break;
             }
         }
@@ -496,5 +496,3 @@ size_t Com_FormatSizeLong(char *dest, size_t destsize, off_t bytes)
     }
     return Q_scnprintf(dest, destsize, "unknown size");
 }
-
-

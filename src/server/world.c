@@ -174,10 +174,10 @@ void SV_LinkEdict(cm_t *cm, edict_t *ent)
 
         max = 0;
         for (i = 0; i < 3; i++) {
-            v = Q_fabs(ent->mins[i]);
+            v = fabsf(ent->mins[i]);
             if (v > max)
                 max = v;
-            v = Q_fabs(ent->maxs[i]);
+            v = fabsf(ent->maxs[i]);
             if (v > max)
                 max = v;
         }
@@ -579,4 +579,3 @@ trace_t q_gameabi SV_Trace(vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end,
     SV_ClipMoveToEntities(start, mins, maxs, end, passedict, contentmask, &trace);
     return trace;
 }
-

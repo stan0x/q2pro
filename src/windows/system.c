@@ -20,7 +20,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "common/cvar.h"
 #include "common/field.h"
 #include "common/prompt.h"
-#include <mmsystem.h>
 #if USE_WINSVC
 #include <winsvc.h>
 #endif
@@ -46,6 +45,8 @@ typedef enum {
 
 static volatile should_exit_t   shouldExit;
 static volatile qboolean        errorEntered;
+
+static LARGE_INTEGER            timer_freq;
 
 cvar_t  *sys_basedir;
 cvar_t  *sys_libdir;
@@ -537,6 +538,124 @@ fail:
 /*
 ===============================================================================
 
+ASYNC WORK QUEUE
+
+===============================================================================
+*/
+
+#if USE_CLIENT
+
+static qboolean work_initialized;
+static qboolean work_terminate;
+static CRITICAL_SECTION work_crit;
+static HANDLE work_event;
+static HANDLE work_thread;
+static asyncwork_t *pend_head;
+static asyncwork_t *done_head;
+
+static void append_work(asyncwork_t **head, asyncwork_t *work)
+{
+    asyncwork_t *c, **p;
+    for (p = head, c = *head; c; p = &c->next, c = c->next);
+    work->next = NULL;
+    *p = work;
+}
+
+static void complete_work(void)
+{
+    asyncwork_t *work, *next;
+
+    if (!work_initialized)
+        return;
+    if (!TryEnterCriticalSection(&work_crit))
+        return;
+    if (q_unlikely(done_head)) {
+        for (work = done_head; work; work = next) {
+            next = work->next;
+            if (work->done_cb)
+                work->done_cb(work->cb_arg);
+            Z_Free(work);
+        }
+        done_head = NULL;
+    }
+    LeaveCriticalSection(&work_crit);
+}
+
+static DWORD WINAPI thread_func(LPVOID arg)
+{
+    EnterCriticalSection(&work_crit);
+    while (1) {
+        while (!pend_head && !work_terminate) {
+            LeaveCriticalSection(&work_crit);
+            if (WaitForSingleObject(work_event, INFINITE))
+                return 1;
+            EnterCriticalSection(&work_crit);
+        }
+
+        asyncwork_t *work = pend_head;
+        if (!work)
+            break;
+        pend_head = work->next;
+
+        LeaveCriticalSection(&work_crit);
+        work->work_cb(work->cb_arg);
+        EnterCriticalSection(&work_crit);
+
+        append_work(&done_head, work);
+    }
+    LeaveCriticalSection(&work_crit);
+
+    return 0;
+}
+
+static void shutdown_work(void)
+{
+    if (!work_initialized)
+        return;
+
+    EnterCriticalSection(&work_crit);
+    work_terminate = qtrue;
+    LeaveCriticalSection(&work_crit);
+
+    SetEvent(work_event);
+
+    WaitForSingleObject(work_thread, INFINITE);
+    complete_work();
+
+    DeleteCriticalSection(&work_crit);
+    CloseHandle(work_event);
+    CloseHandle(work_thread);
+    work_initialized = qfalse;
+}
+
+void Sys_QueueAsyncWork(asyncwork_t *work)
+{
+    if (!work_initialized) {
+        InitializeCriticalSection(&work_crit);
+        work_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+        if (!work_event)
+            Sys_Error("Couldn't create async work event");
+        work_thread = CreateThread(NULL, 0, thread_func, NULL, 0, NULL);
+        if (!work_thread)
+            Sys_Error("Couldn't create async work thread");
+        work_initialized = qtrue;
+    }
+
+    EnterCriticalSection(&work_crit);
+    append_work(&pend_head, Z_CopyStruct(work));
+    LeaveCriticalSection(&work_crit);
+
+    SetEvent(work_event);
+}
+
+#else
+#define shutdown_work() (void)0
+#define complete_work() (void)0
+#endif
+
+/*
+===============================================================================
+
 MISC
 
 ===============================================================================
@@ -613,7 +732,7 @@ This function never returns.
 */
 void Sys_Quit(void)
 {
-    timeEndPeriod(1);
+    shutdown_work();
 
 #if USE_CLIENT
 #if USE_SYSCON
@@ -638,7 +757,9 @@ void Sys_DebugBreak(void)
 
 unsigned Sys_Milliseconds(void)
 {
-    return timeGetTime();
+    LARGE_INTEGER tm;
+    QueryPerformanceCounter(&tm);
+    return tm.QuadPart * 1000ULL / timer_freq.QuadPart;
 }
 
 void Sys_AddDefaultConfig(void)
@@ -664,8 +785,6 @@ void Sys_Init(void)
 #endif
     cvar_t *var = NULL;
 
-    timeBeginPeriod(1);
-
     // check windows version
     vinfo.dwOSVersionInfoSize = sizeof(vinfo);
     if (!GetVersionEx(&vinfo)) {
@@ -677,6 +796,9 @@ void Sys_Init(void)
     if (vinfo.dwMajorVersion < 5) {
         Sys_Error(PRODUCT " requires Windows 2000 or greater");
     }
+
+    if (!QueryPerformanceFrequency(&timer_freq))
+        Sys_Error("QueryPerformanceFrequency failed");
 
     // basedir <path>
     // allows the game to run from outside the data tree
@@ -804,7 +926,7 @@ FILESYSTEM
 static inline time_t file_time_to_unix(FILETIME *f)
 {
     ULARGE_INTEGER u = *(ULARGE_INTEGER *)f;
-    return (time_t)((u.QuadPart - 116444736000000000ULL) / 10000000);
+    return (u.QuadPart - 116444736000000000ULL) / 10000000;
 }
 
 static void *copy_info(const char *name, const LPWIN32_FIND_DATAA data)
@@ -818,20 +940,9 @@ static void *copy_info(const char *name, const LPWIN32_FIND_DATAA data)
 /*
 =================
 Sys_ListFiles_r
-
-Internal function to filesystem. Conventions apply:
-    - files should hold at least MAX_LISTED_FILES
-    - *count_p must be initialized in range [0, MAX_LISTED_FILES - 1]
-    - depth must be 0 on the first call
 =================
 */
-void Sys_ListFiles_r(const char  *path,
-                     const char  *filter,
-                     unsigned    flags,
-                     size_t      baselen,
-                     int         *count_p,
-                     void        **files,
-                     int         depth)
+void Sys_ListFiles_r(listfiles_t *list, const char *path, int depth)
 {
     WIN32_FIND_DATAA    data;
     HANDLE      handle;
@@ -839,9 +950,10 @@ void Sys_ListFiles_r(const char  *path,
     size_t      pathlen, len;
     unsigned    mask;
     void        *info;
+    const char  *filter = list->filter;
 
     // optimize single extension search
-    if (!(flags & FS_SEARCH_BYFILTER) &&
+    if (!(list->flags & FS_SEARCH_BYFILTER) &&
         filter && !strchr(filter, ';')) {
         if (*filter == '.') {
             filter++;
@@ -893,26 +1005,25 @@ void Sys_ListFiles_r(const char  *path,
         }
 
         // pattern search implies recursive search
-        if ((flags & FS_SEARCH_BYFILTER) && mask &&
+        if ((list->flags & FS_SEARCH_BYFILTER) && mask &&
             depth < MAX_LISTED_DEPTH) {
-            Sys_ListFiles_r(fullpath, filter, flags, baselen,
-                            count_p, files, depth + 1);
+            Sys_ListFiles_r(list, fullpath, depth + 1);
 
             // re-check count
-            if (*count_p >= MAX_LISTED_FILES) {
+            if (list->count >= MAX_LISTED_FILES) {
                 break;
             }
         }
 
         // check type
-        if ((flags & FS_SEARCH_DIRSONLY) != mask) {
+        if ((list->flags & FS_SEARCH_DIRSONLY) != mask) {
             continue;
         }
 
         // check filter
         if (filter) {
-            if (flags & FS_SEARCH_BYFILTER) {
-                if (!FS_WildCmp(filter, fullpath + baselen)) {
+            if (list->flags & FS_SEARCH_BYFILTER) {
+                if (!FS_WildCmp(filter, fullpath + list->baselen)) {
                     continue;
                 }
             } else {
@@ -923,8 +1034,8 @@ void Sys_ListFiles_r(const char  *path,
         }
 
         // strip path
-        if (flags & FS_SEARCH_SAVEPATH) {
-            name = fullpath + baselen;
+        if (list->flags & FS_SEARCH_SAVEPATH) {
+            name = fullpath + list->baselen;
         } else {
             name = data.cFileName;
         }
@@ -933,7 +1044,7 @@ void Sys_ListFiles_r(const char  *path,
         FS_ReplaceSeparators(name, '/');
 
         // strip extension
-        if (flags & FS_SEARCH_STRIPEXT) {
+        if (list->flags & FS_SEARCH_STRIPEXT) {
             *COM_FileExtension(name) = 0;
 
             if (!*name) {
@@ -942,14 +1053,15 @@ void Sys_ListFiles_r(const char  *path,
         }
 
         // copy info off
-        if (flags & FS_SEARCH_EXTRAINFO) {
+        if (list->flags & FS_SEARCH_EXTRAINFO) {
             info = copy_info(name, &data);
         } else {
             info = FS_CopyString(name);
         }
 
-        files[(*count_p)++] = info;
-    } while (*count_p < MAX_LISTED_FILES &&
+        list->files = FS_ReallocList(list->files, list->count + 1);
+        list->files[list->count++] = info;
+    } while (list->count < MAX_LISTED_FILES &&
              FindNextFileA(handle, &data) != FALSE);
 
     FindClose(handle);
@@ -1008,6 +1120,7 @@ static int Sys_Main(int argc, char **argv)
 
     // main program loop
     while (1) {
+        complete_work();
         Qcommon_Frame();
         if (shouldExit) {
 #if USE_WINSVC
@@ -1160,4 +1273,3 @@ int main(int argc, char **argv)
 }
 
 #endif // !USE_CLIENT
-

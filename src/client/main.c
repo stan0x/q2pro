@@ -183,7 +183,7 @@ static void CL_UpdateGunSetting(void)
 
     if (cl_gun->integer == -1) {
         nogun = 2;
-    } else if (cl_gun->integer == 0 || info_hand->integer == 2) {
+    } else if (cl_gun->integer == 0 || (info_hand->integer == 2 && cl_gun->integer == 1)) {
         nogun = 1;
     } else {
         nogun = 0;
@@ -689,9 +689,7 @@ void CL_ClearState(void)
 {
     S_StopAllSounds();
     CL_ClearEffects();
-#if USE_LIGHTSTYLES
     CL_ClearLightStyles();
-#endif
     CL_ClearTEnts();
     LOC_FreeLocations();
 
@@ -1374,10 +1372,12 @@ static void CL_ConnectionlessPacket(void)
                 break;
             }
             cls.serverProtocol = PROTOCOL_VERSION_R1Q2;
+            // fall through
         case PROTOCOL_VERSION_R1Q2:
             if (mask & 1) {
                 break;
             }
+            // fall through
         default:
             cls.serverProtocol = PROTOCOL_VERSION_DEFAULT;
             break;
@@ -1461,7 +1461,7 @@ static void CL_ConnectionlessPacket(void)
         if (anticheat) {
             MSG_WriteByte(clc_nop);
             MSG_FlushTo(&cls.netchan->message);
-            cls.netchan->Transmit(cls.netchan, 0, NULL, 3);
+            cls.netchan->Transmit(cls.netchan, 0, "", 3);
             S_StopAllSounds();
             cls.connect_count = -1;
             Com_Printf("Loading anticheat, this may take a few moments...\n");
@@ -1578,10 +1578,6 @@ static void CL_PacketEvent(void)
 
     if (!cls.netchan)
         return;     // might have disconnected
-
-#ifdef _DEBUG
-    CL_AddNetgraph();
-#endif
 
     SCR_LagSample();
 }
@@ -2225,7 +2221,7 @@ static size_t CL_Ups_m(char *buffer, size_t size)
         VectorScale(cl.frame.ps.pmove.velocity, 0.125f, vel);
     }
 
-    return Q_scnprintf(buffer, size, "%d", (int)VectorLength(vel));
+    return Q_scnprintf(buffer, size, "%.f", VectorLength(vel));
 }
 
 static size_t CL_Timer_m(char *buffer, size_t size)
@@ -2586,6 +2582,11 @@ static void cl_chat_sound_changed(cvar_t *self)
         self->integer = 1;
 }
 
+void cl_timeout_changed(cvar_t *self)
+{
+    self->integer = 1000 * Cvar_ClampValue(self, 0, 24 * 24 * 60 * 60);
+}
+
 static const cmdreg_t c_client[] = {
     { "cmd", CL_ForwardToServer_f },
     { "pause", CL_Pause_f },
@@ -2700,6 +2701,8 @@ static void CL_InitLocal(void)
 #endif
 
     cl_timeout = Cvar_Get("cl_timeout", "120", 0);
+    cl_timeout->changed = cl_timeout_changed;
+    cl_timeout_changed(cl_timeout);
 
     rcon_address = Cvar_Get("rcon_address", "", CVAR_PRIVATE);
     rcon_address->generator = Com_Address_g;
@@ -2933,23 +2936,17 @@ static void CL_CheckForReply(void)
 
 static void CL_CheckTimeout(void)
 {
-    unsigned delta;
-
     if (NET_IsLocalAddress(&cls.netchan->remote_address)) {
         return;
     }
 
 #if USE_ICMP
-    if (cls.errorReceived) {
-        delta = 5000;
-        if (com_localTime - cls.netchan->last_received > delta)  {
-            Com_Error(ERR_DISCONNECT, "Server connection was reset.");
-        }
+    if (cls.errorReceived && com_localTime - cls.netchan->last_received > 5000) {
+        Com_Error(ERR_DISCONNECT, "Server connection was reset.");
     }
 #endif
 
-    delta = cl_timeout->value * 1000;
-    if (delta && com_localTime - cls.netchan->last_received > delta)  {
+    if (cl_timeout->integer && com_localTime - cls.netchan->last_received > cl_timeout->integer) {
         // timeoutcount saves debugger
         if (++cl.timeoutcount > 5) {
             Com_Error(ERR_DISCONNECT, "Server connection timed out.");
@@ -3263,10 +3260,7 @@ run_fx:
 #if USE_DLIGHTS
         CL_RunDLights();
 #endif
-
-#if USE_LIGHTSTYLES
         CL_RunLightStyles();
-#endif
     } else if (sync_mode == SYNC_SLEEP_10) {
         // force audio and effects update if not rendering
         CL_CalcViewValues();
@@ -3414,4 +3408,3 @@ void CL_Shutdown(void)
 
     isdown = qfalse;
 }
-

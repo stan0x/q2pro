@@ -63,7 +63,8 @@ static const glmode_t filterModes[] = {
     { "GL_NEAREST_MIPMAP_NEAREST", GL_NEAREST_MIPMAP_NEAREST, GL_NEAREST },
     { "GL_LINEAR_MIPMAP_NEAREST", GL_LINEAR_MIPMAP_NEAREST, GL_LINEAR },
     { "GL_NEAREST_MIPMAP_LINEAR", GL_NEAREST_MIPMAP_LINEAR, GL_NEAREST },
-    { "GL_LINEAR_MIPMAP_LINEAR", GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR }
+    { "GL_LINEAR_MIPMAP_LINEAR", GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR },
+    { "MAG_NEAREST", GL_LINEAR_MIPMAP_LINEAR, GL_NEAREST },
 };
 
 static const int numFilterModes = q_countof(filterModes);
@@ -116,8 +117,7 @@ static void gl_anisotropy_changed(cvar_t *self)
     if (!(gl_config.ext_enabled & QGL_EXT_texture_filter_anisotropic))
         return;
 
-    gl_filter_anisotropy = self->value;
-    clamp(gl_filter_anisotropy, 1, gl_config.maxAnisotropy);
+    gl_filter_anisotropy = Cvar_ClampValue(self, 1, gl_config.maxAnisotropy);
 
     // change all the existing mipmap texture objects
     for (i = 0, image = r_images; i < r_numImages; i++, image++) {
@@ -959,4 +959,3 @@ void GL_ShutdownImages(void)
 
     Scrap_Shutdown();
 }
-

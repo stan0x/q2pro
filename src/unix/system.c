@@ -38,6 +38,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <dlfcn.h>
 #include <errno.h>
 
+#if USE_CLIENT
+#include <pthread.h>
+#endif
+
 #if USE_SDL
 #include <SDL_main.h>
 #endif
@@ -48,6 +52,115 @@ cvar_t  *sys_homedir;
 cvar_t  *sys_forcegamelib;
 
 static qboolean terminate;
+static qboolean flush_logs;
+
+/*
+===============================================================================
+
+ASYNC WORK QUEUE
+
+===============================================================================
+*/
+
+#if USE_CLIENT
+
+static qboolean work_initialized;
+static qboolean work_terminate;
+static pthread_mutex_t work_lock;
+static pthread_cond_t work_cond;
+static pthread_t work_thread;
+static asyncwork_t *pend_head;
+static asyncwork_t *done_head;
+
+static void append_work(asyncwork_t **head, asyncwork_t *work)
+{
+    asyncwork_t *c, **p;
+    for (p = head, c = *head; c; p = &c->next, c = c->next);
+    work->next = NULL;
+    *p = work;
+}
+
+static void complete_work(void)
+{
+    asyncwork_t *work, *next;
+
+    if (!work_initialized)
+        return;
+    if (pthread_mutex_trylock(&work_lock))
+        return;
+    if (q_unlikely(done_head)) {
+        for (work = done_head; work; work = next) {
+            next = work->next;
+            if (work->done_cb)
+                work->done_cb(work->cb_arg);
+            Z_Free(work);
+        }
+        done_head = NULL;
+    }
+    pthread_mutex_unlock(&work_lock);
+}
+
+static void *thread_func(void *arg)
+{
+    pthread_mutex_lock(&work_lock);
+    while (1) {
+        while (!pend_head && !work_terminate)
+            pthread_cond_wait(&work_cond, &work_lock);
+
+        asyncwork_t *work = pend_head;
+        if (!work)
+            break;
+        pend_head = work->next;
+
+        pthread_mutex_unlock(&work_lock);
+        work->work_cb(work->cb_arg);
+        pthread_mutex_lock(&work_lock);
+
+        append_work(&done_head, work);
+    }
+    pthread_mutex_unlock(&work_lock);
+
+    return NULL;
+}
+
+static void shutdown_work(void)
+{
+    if (!work_initialized)
+        return;
+
+    pthread_mutex_lock(&work_lock);
+    work_terminate = qtrue;
+    pthread_cond_signal(&work_cond);
+    pthread_mutex_unlock(&work_lock);
+
+    pthread_join(work_thread, NULL);
+    complete_work();
+
+    pthread_mutex_destroy(&work_lock);
+    pthread_cond_destroy(&work_cond);
+    work_initialized = qfalse;
+}
+
+void Sys_QueueAsyncWork(asyncwork_t *work)
+{
+    if (!work_initialized) {
+        pthread_mutex_init(&work_lock, NULL);
+        pthread_cond_init(&work_cond, NULL);
+        if (pthread_create(&work_thread, NULL, thread_func, NULL))
+            Sys_Error("Couldn't create async work thread");
+        work_initialized = qtrue;
+    }
+
+    pthread_mutex_lock(&work_lock);
+    append_work(&pend_head, Z_CopyStruct(work));
+    pthread_cond_signal(&work_cond);
+    pthread_mutex_unlock(&work_lock);
+}
+
+#else
+#define shutdown_work() (void)0
+#define complete_work() (void)0
+#endif
 
 /*
 ===============================================================================
@@ -65,11 +178,8 @@ void Sys_DebugBreak(void)
 unsigned Sys_Milliseconds(void)
 {
     struct timeval tp;
-    unsigned time;
-
     gettimeofday(&tp, NULL);
-    time = tp.tv_sec * 1000 + tp.tv_usec / 1000;
-    return time;
+    return tp.tv_sec * 1000UL + tp.tv_usec / 1000UL;
 }
 
 /*
@@ -81,6 +191,7 @@ This function never returns.
 */
 void Sys_Quit(void)
 {
+    shutdown_work();
     tty_shutdown_input();
     exit(EXIT_SUCCESS);
 }
@@ -90,28 +201,18 @@ void Sys_Quit(void)
 void Sys_AddDefaultConfig(void)
 {
     FILE *fp;
-    struct stat st;
-    size_t len, r;
+    size_t len;
 
     fp = fopen(SYS_SITE_CFG, "r");
     if (!fp) {
         return;
     }
 
-    if (fstat(fileno(fp), &st) == 0) {
-        len = st.st_size;
-        if (len >= cmd_buffer.maxsize) {
-            len = cmd_buffer.maxsize - 1;
-        }
-
-        r = fread(cmd_buffer.text, 1, len, fp);
-        cmd_buffer.text[r] = 0;
-
-        cmd_buffer.cursize = COM_Compress(cmd_buffer.text);
-    }
-
+    len = fread(cmd_buffer.text, 1, cmd_buffer.maxsize - 1, fp);
     fclose(fp);
 
+    cmd_buffer.text[len] = 0;
+    cmd_buffer.cursize = COM_Compress(cmd_buffer.text);
     if (cmd_buffer.cursize) {
         Com_Printf("Execing %s\n", SYS_SITE_CFG);
         Cbuf_Execute(&cmd_buffer);
@@ -137,7 +238,7 @@ qboolean Sys_GetAntiCheatAPI(void)
 
 static void hup_handler(int signum)
 {
-    Com_FlushLogs();
+    flush_logs = qtrue;
 }
 
 static void term_handler(int signum)
@@ -182,6 +283,7 @@ void Sys_Init(void)
     signal(SIGINT, term_handler);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
     signal(SIGUSR1, hup_handler);
 
     // basedir <path>
@@ -325,20 +427,9 @@ MISC
 /*
 =================
 Sys_ListFiles_r
-
-Internal function to filesystem. Conventions apply:
-    - files should hold at least MAX_LISTED_FILES
-    - *count_p must be initialized in range [0, MAX_LISTED_FILES - 1]
-    - depth must be 0 on the first call
 =================
 */
-void Sys_ListFiles_r(const char  *path,
-                     const char  *filter,
-                     unsigned    flags,
-                     size_t      baselen,
-                     int         *count_p,
-                     void        **files,
-                     int         depth)
+void Sys_ListFiles_r(listfiles_t *list, const char *path, int depth)
 {
     struct dirent *ent;
     DIR *dir;
@@ -367,7 +458,7 @@ void Sys_ListFiles_r(const char  *path,
 
 #ifdef _DIRENT_HAVE_D_TYPE
         // try to avoid stat() if possible
-        if (!(flags & FS_SEARCH_EXTRAINFO)
+        if (!(list->flags & FS_SEARCH_EXTRAINFO)
             && ent->d_type != DT_UNKNOWN
             && ent->d_type != DT_LNK) {
             st.st_mode = DTTOIF(ent->d_type);
@@ -379,19 +470,18 @@ void Sys_ListFiles_r(const char  *path,
         }
 
         // pattern search implies recursive search
-        if ((flags & FS_SEARCH_BYFILTER) &&
+        if ((list->flags & FS_SEARCH_BYFILTER) &&
             S_ISDIR(st.st_mode) && depth < MAX_LISTED_DEPTH) {
-            Sys_ListFiles_r(fullpath, filter, flags, baselen,
-                            count_p, files, depth + 1);
+            Sys_ListFiles_r(list, fullpath, depth + 1);
 
             // re-check count
-            if (*count_p >= MAX_LISTED_FILES) {
+            if (list->count >= MAX_LISTED_FILES) {
                 break;
             }
         }
 
         // check type
-        if (flags & FS_SEARCH_DIRSONLY) {
+        if (list->flags & FS_SEARCH_DIRSONLY) {
             if (!S_ISDIR(st.st_mode)) {
                 continue;
             }
@@ -402,27 +492,27 @@ void Sys_ListFiles_r(const char  *path,
         }
 
         // check filter
-        if (filter) {
-            if (flags & FS_SEARCH_BYFILTER) {
-                if (!FS_WildCmp(filter, fullpath + baselen)) {
+        if (list->filter) {
+            if (list->flags & FS_SEARCH_BYFILTER) {
+                if (!FS_WildCmp(list->filter, fullpath + list->baselen)) {
                     continue;
                 }
             } else {
-                if (!FS_ExtCmp(filter, ent->d_name)) {
+                if (!FS_ExtCmp(list->filter, ent->d_name)) {
                     continue;
                 }
             }
         }
 
         // strip path
-        if (flags & FS_SEARCH_SAVEPATH) {
-            name = fullpath + baselen;
+        if (list->flags & FS_SEARCH_SAVEPATH) {
+            name = fullpath + list->baselen;
         } else {
             name = ent->d_name;
         }
 
         // strip extension
-        if (flags & FS_SEARCH_STRIPEXT) {
+        if (list->flags & FS_SEARCH_STRIPEXT) {
             *COM_FileExtension(name) = 0;
 
             if (!*name) {
@@ -431,7 +521,7 @@ void Sys_ListFiles_r(const char  *path,
         }
 
         // copy info off
-        if (flags & FS_SEARCH_EXTRAINFO) {
+        if (list->flags & FS_SEARCH_EXTRAINFO) {
             info = FS_CopyInfo(name,
                                st.st_size,
                                st.st_ctime,
@@ -440,9 +530,10 @@ void Sys_ListFiles_r(const char  *path,
             info = FS_CopyString(name);
         }
 
-        files[(*count_p)++] = info;
+        list->files = FS_ReallocList(list->files, list->count + 1);
+        list->files[list->count++] = info;
 
-        if (*count_p >= MAX_LISTED_FILES) {
+        if (list->count >= MAX_LISTED_FILES) {
             break;
         }
     }
@@ -476,10 +567,14 @@ int main(int argc, char **argv)
 
     Qcommon_Init(argc, argv);
     while (!terminate) {
+        complete_work();
+        if (flush_logs) {
+            Com_FlushLogs();
+            flush_logs = qfalse;
+        }
         Qcommon_Frame();
     }
 
     Com_Quit(NULL, ERR_DISCONNECT);
     return EXIT_FAILURE; // never gets here
 }
-

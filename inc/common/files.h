@@ -23,7 +23,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "common/error.h"
 #include "common/zone.h"
 
-#define MAX_LISTED_FILES    2048
+#define MIN_LISTED_FILES    1024
+#define MAX_LISTED_FILES    250000000
 #define MAX_LISTED_DEPTH    8
 
 typedef struct file_info_s {
@@ -159,6 +160,9 @@ ssize_t  FS_Length(qhandle_t f);
 qboolean FS_WildCmp(const char *filter, const char *string);
 qboolean FS_ExtCmp(const char *extension, const char *string);
 
+#define FS_ReallocList(list, count) \
+    Z_Realloc(list, ALIGN(count, MIN_LISTED_FILES) * sizeof(void *))
+
 void    **FS_ListFiles(const char *path, const char *filter, unsigned flags, int *count_p);
 void    **FS_CopyList(void **list, int count);
 file_info_t *FS_CopyInfo(const char *name, size_t size, time_t ctime, time_t mtime);
@@ -172,6 +176,7 @@ size_t FS_NormalizePathBuffer(char *out, const char *in, size_t size);
 #define PATH_MIXED_CASE     2
 
 int FS_ValidatePath(const char *s);
+void FS_CleanupPath(char *s);
 
 void FS_SanitizeFilenameVariable(cvar_t *var);
 
@@ -180,6 +185,8 @@ char *FS_ReplaceSeparators(char *s, int separator);
 #endif
 
 void FS_File_g(const char *path, const char *ext, unsigned flags, genctx_t *ctx);
+
+FILE *Q_fopen(const char *path, const char *mode);
 
 extern cvar_t   *fs_game;
 

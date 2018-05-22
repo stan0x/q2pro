@@ -1059,6 +1059,7 @@ static void Expose(menuFrameWork_t *self)
 
 static void Free(menuFrameWork_t *self)
 {
+    Z_Free(m_servers.menu.items);
     memset(&m_servers, 0, sizeof(m_servers));
 }
 
@@ -1156,4 +1157,3 @@ void M_Menu_Servers(void)
 
     List_Append(&ui_menus, &m_servers.menu.entry);
 }
-

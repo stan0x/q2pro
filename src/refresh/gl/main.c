@@ -695,13 +695,15 @@ static void gl_lightmap_changed(cvar_t *self)
     else
         lm.comp = lm.scale ? GL_RGB : GL_LUMINANCE;
     lm.add = 255 * Cvar_ClampValue(gl_brightness, -1, 1);
-    lm.modulate = gl_modulate->value * gl_modulate_world->value;
+    lm.modulate = Cvar_ClampValue(gl_modulate, 0, 1e6);
+    lm.modulate *= Cvar_ClampValue(gl_modulate_world, 0, 1e6);
     lm.dirty = qtrue; // rebuild all lightmaps next frame
 }
 
 static void gl_modulate_entities_changed(cvar_t *self)
 {
-    gl_static.entity_modulate = gl_modulate->value * gl_modulate_entities->value;
+    gl_static.entity_modulate = Cvar_ClampValue(gl_modulate, 0, 1e6);
+    gl_static.entity_modulate *= Cvar_ClampValue(gl_modulate_entities, 0, 1e6);
 }
 
 static void gl_modulate_changed(cvar_t *self)
@@ -950,8 +952,8 @@ static void GL_InitTables(void)
         v = bytedirs[i];
         lat = acos(v[2]);
         lng = atan2(v[1], v[0]);
-        gl_static.latlngtab[i][0] = lat * (255.0f / (2 * M_PI));
-        gl_static.latlngtab[i][1] = lng * (255.0f / (2 * M_PI));
+        gl_static.latlngtab[i][0] = (int)(lat * (255.0f / (2 * M_PI))) & 255;
+        gl_static.latlngtab[i][1] = (int)(lng * (255.0f / (2 * M_PI))) & 255;
     }
 
     for (i = 0; i < 256; i++) {
@@ -1130,4 +1132,3 @@ void R_ModeChanged(int width, int height, int flags, int rowbytes, void *pixels)
     r_config.height = height;
     r_config.flags = flags;
 }
-

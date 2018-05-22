@@ -1561,13 +1561,6 @@ If START_OFF, this entity must be used before it starts
             2 "xx:xx:xx"
 */
 
-#define CLOCK_MESSAGE_SIZE  16
-
-// don't let field width of any clock messages change, or it
-// could cause an overwrite after a game load
-
-// TODO: skuller: fix savegame restore bug
-
 static void func_clock_reset(edict_t *self)
 {
     self->activator = NULL;
@@ -1794,4 +1787,3 @@ void SP_misc_teleporter_dest(edict_t *ent)
     VectorSet(ent->maxs, 32, 32, -16);
     gi.linkentity(ent);
 }
-
