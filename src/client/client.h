@@ -562,6 +562,7 @@ void CL_CheckForPause(void);
 void CL_UpdateFrameTimes(void);
 qboolean CL_CheckForIgnore(const char *s);
 
+void cl_timeout_changed(cvar_t *self);
 
 //
 // precache.c
@@ -900,7 +901,6 @@ void    SCR_FinishCinematic(void);
 void    SCR_PlayCinematic(const char *name);
 void    SCR_BeginLoadingPlaque(void);
 void    SCR_EndLoadingPlaque(void);
-void    SCR_DebugGraph(float value, int color);
 void    SCR_TouchPics(void);
 void    SCR_RegisterMedia(void);
 void    SCR_ModeChanged(void);
@@ -914,10 +914,6 @@ void    SCR_DrawStringMulti(int x, int y, int flags, size_t maxlen, const char *
 
 void    SCR_ClearChatHUD_f(void);
 void    SCR_AddToChatHUD(const char *text);
-
-#ifdef _DEBUG
-void CL_AddNetgraph(void);
-#endif
 
 
 //

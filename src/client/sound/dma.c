@@ -167,7 +167,7 @@ void DMA_Update(void)
     }
 
 // mix ahead of current position
-    endtime = soundtime + s_mixahead->value * dma.speed;
+    endtime = soundtime + Cvar_ClampValue(s_mixahead, 0, 1) * dma.speed;
 
     // mix to an even submission block size
     endtime = ALIGN(endtime, dma.submission_chunk);
@@ -179,5 +179,3 @@ void DMA_Update(void)
 
     snddma.Submit();
 }
-
-

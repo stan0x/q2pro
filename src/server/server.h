@@ -564,6 +564,9 @@ voidpf SV_zalloc(voidpf opaque, uInt items, uInt size);
 void SV_zfree(voidpf opaque, voidpf address);
 #endif
 
+void sv_sec_timeout_changed(cvar_t *self);
+void sv_min_timeout_changed(cvar_t *self);
+
 //
 // sv_init.c
 //
@@ -797,4 +800,3 @@ trace_t q_gameabi SV_Trace(vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end,
 // to an open area
 
 // passedict is explicitly excluded from clipping checks (normally NULL)
-

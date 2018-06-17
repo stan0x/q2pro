@@ -122,12 +122,7 @@ Win_ModeChanged
 */
 void Win_ModeChanged(void)
 {
-#if USE_REF == REF_SOFT
-    void SWimp_ModeChanged(void);
-    SWimp_ModeChanged();
-#endif
-    R_ModeChanged(win.rc.width, win.rc.height, win.flags,
-                  win.pitch, win.buffer);
+    R_ModeChanged(win.rc.width, win.rc.height, win.flags);
     SCR_ModeChanged();
 }
 
@@ -1394,4 +1389,3 @@ void VID_FillInputAPI(inputAPI_t *api)
     api->GetEvents = NULL;
     api->GetMotion = Win_GetMouseMotion;
 }
-

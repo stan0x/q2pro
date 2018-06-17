@@ -219,7 +219,7 @@ color_index_t Com_ParseColor(const char *s, color_index_t last)
     return COLOR_NONE;
 }
 
-#if USE_REF == REF_GL
+#if USE_REF
 /*
 ================
 Com_ParseExtensionString
@@ -496,5 +496,3 @@ size_t Com_FormatSizeLong(char *dest, size_t destsize, off_t bytes)
     }
     return Q_scnprintf(dest, destsize, "unknown size");
 }
-
-
