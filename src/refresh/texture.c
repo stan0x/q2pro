@@ -30,6 +30,8 @@ static int upload_width;
 static int upload_height;
 static qboolean upload_alpha;
 
+static int max_texture_size;
+
 static cvar_t *gl_noscrap;
 static cvar_t *gl_round_down;
 static cvar_t *gl_picmip;
@@ -40,12 +42,13 @@ static cvar_t *gl_bilerp_pics;
 static cvar_t *gl_upscale_pcx;
 static cvar_t *gl_texturemode;
 static cvar_t *gl_texturebits;
-static cvar_t *gl_texture_non_power_of_two;
 static cvar_t *gl_anisotropy;
 static cvar_t *gl_saturation;
-static cvar_t *gl_intensity;
 static cvar_t *gl_gamma;
 static cvar_t *gl_invert;
+static cvar_t *gl_partshape;
+
+cvar_t *gl_intensity;
 
 static int GL_UpscaleLevel(int width, int height, imagetype_t type, imageflags_t flags);
 static void GL_Upload32(byte *data, int width, int height, int baselevel, imagetype_t type, imageflags_t flags);
@@ -113,11 +116,13 @@ static void gl_anisotropy_changed(cvar_t *self)
 {
     int     i;
     image_t *image;
+    GLfloat value;
 
-    if (!(gl_config.ext_enabled & QGL_EXT_texture_filter_anisotropic))
+    if (!(gl_config.caps & QGL_CAP_TEXTURE_ANISOTROPY))
         return;
 
-    gl_filter_anisotropy = Cvar_ClampValue(self, 1, gl_config.maxAnisotropy);
+    qglGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &value);
+    gl_filter_anisotropy = Cvar_ClampValue(self, 1, value);
 
     // change all the existing mipmap texture objects
     for (i = 0, image = r_images; i < r_numImages; i++, image++) {
@@ -158,11 +163,9 @@ static void gl_bilerp_pics_changed(cvar_t *self)
 
 static void gl_texturebits_changed(cvar_t *self)
 {
-    // ES doesn't support internal format != external
-    if (AT_LEAST_OPENGL_ES(1, 0)) {
+    if (!(gl_config.caps & QGL_CAP_TEXTURE_BITS)) {
         gl_tex_alpha_format = GL_RGBA;
         gl_tex_solid_format = GL_RGBA;
-#ifdef GL_VERSION_1_1
     } else if (self->integer > 16) {
         gl_tex_alpha_format = GL_RGBA8;
         gl_tex_solid_format = GL_RGB8;
@@ -172,10 +175,79 @@ static void gl_texturebits_changed(cvar_t *self)
     } else if (self->integer > 0)  {
         gl_tex_alpha_format = GL_RGBA2;
         gl_tex_solid_format = GL_R3_G3_B2;
-#endif
     } else {
         gl_tex_alpha_format = GL_RGBA;
         gl_tex_solid_format = GL_RGB;
+    }
+}
+
+/*
+=========================================================
+
+IMAGE PROCESSING
+
+=========================================================
+*/
+
+static void IMG_ResampleTexture(const byte *in, int inwidth, int inheight,
+                                byte *out, int outwidth, int outheight)
+{
+    int i, j;
+    const byte  *inrow1, *inrow2;
+    unsigned    frac, fracstep;
+    unsigned    p1[MAX_TEXTURE_SIZE], p2[MAX_TEXTURE_SIZE];
+    const byte  *pix1, *pix2, *pix3, *pix4;
+    float       heightScale;
+
+    if (outwidth > MAX_TEXTURE_SIZE) {
+        Com_Error(ERR_FATAL, "%s: outwidth > %d", __func__, MAX_TEXTURE_SIZE);
+    }
+
+    fracstep = inwidth * 0x10000 / outwidth;
+
+    frac = fracstep >> 2;
+    for (i = 0; i < outwidth; i++) {
+        p1[i] = 4 * (frac >> 16);
+        frac += fracstep;
+    }
+    frac = 3 * (fracstep >> 2);
+    for (i = 0; i < outwidth; i++) {
+        p2[i] = 4 * (frac >> 16);
+        frac += fracstep;
+    }
+
+    heightScale = (float)inheight / outheight;
+    inwidth <<= 2;
+    for (i = 0; i < outheight; i++) {
+        inrow1 = in + inwidth * (int)((i + 0.25f) * heightScale);
+        inrow2 = in + inwidth * (int)((i + 0.75f) * heightScale);
+        for (j = 0; j < outwidth; j++) {
+            pix1 = inrow1 + p1[j];
+            pix2 = inrow1 + p2[j];
+            pix3 = inrow2 + p1[j];
+            pix4 = inrow2 + p2[j];
+            out[0] = (pix1[0] + pix2[0] + pix3[0] + pix4[0]) >> 2;
+            out[1] = (pix1[1] + pix2[1] + pix3[1] + pix4[1]) >> 2;
+            out[2] = (pix1[2] + pix2[2] + pix3[2] + pix4[2]) >> 2;
+            out[3] = (pix1[3] + pix2[3] + pix3[3] + pix4[3]) >> 2;
+            out += 4;
+        }
+    }
+}
+
+static void IMG_MipMap(byte *out, byte *in, int width, int height)
+{
+    int     i, j;
+
+    width <<= 2;
+    height >>= 1;
+    for (i = 0; i < height; i++, in += width) {
+        for (j = 0; j < width; j += 8, out += 4, in += 8) {
+            out[0] = (in[0] + in[4] + in[width + 0] + in[width + 4]) >> 2;
+            out[1] = (in[1] + in[5] + in[width + 1] + in[width + 5]) >> 2;
+            out[2] = (in[2] + in[6] + in[width + 2] + in[width + 6]) >> 2;
+            out[3] = (in[3] + in[7] + in[width + 3] + in[width + 7]) >> 2;
+        }
     }
 }
 
@@ -280,8 +352,7 @@ static int GL_GrayScaleTexture(byte *in, int inwidth, int inheight, imagetype_t 
         p[2] = y + (b - y) * colorscale;
     }
 
-    // ES doesn't support internal format != external
-    if (colorscale == 0 && !AT_LEAST_OPENGL_ES(1, 0))
+    if (colorscale == 0 && (gl_config.caps & QGL_CAP_TEXTURE_BITS))
         return GL_LUMINANCE;
 
     return gl_tex_solid_format;
@@ -364,7 +435,7 @@ static qboolean GL_MakePowerOfTwo(int *width, int *height)
     if (!(*width & (*width - 1)) && !(*height & (*height - 1)))
         return qtrue;   // already power of two
 
-    if (AT_LEAST_OPENGL(3, 0) && gl_texture_non_power_of_two->integer)
+    if (gl_config.caps & QGL_CAP_TEXTURE_NON_POWER_OF_TWO)
         return qfalse;  // assume full NPOT texture support
 
     *width = npot32(*width);
@@ -402,7 +473,7 @@ static void GL_Upload32(byte *data, int width, int height, int baselevel, imaget
     }
 
     // don't ever bother with >256 textures
-    while (scaled_width > gl_config.maxTextureSize || scaled_height > gl_config.maxTextureSize) {
+    while (scaled_width > max_texture_size || scaled_height > max_texture_size) {
         scaled_width >>= 1;
         scaled_height >>= 1;
     }
@@ -497,7 +568,7 @@ static int GL_UpscaleLevel(int width, int height, imagetype_t type, imageflags_t
 
     maxlevel = Cvar_ClampInteger(gl_upscale_pcx, 0, 2);
     while (maxlevel) {
-        int maxsize = gl_config.maxTextureSize >> maxlevel;
+        int maxsize = max_texture_size >> maxlevel;
 
         // don't bother upscaling larger than max texture size
         if (width <= maxsize && height <= maxsize)
@@ -529,22 +600,18 @@ static void GL_Upscale32(byte *data, int width, int height, int maxlevel, imaget
 
     GL_Upload32(data, width, height, maxlevel, type, flags);
 
-#ifdef GL_TEXTURE_MAX_LEVEL
-    if (AT_LEAST_OPENGL(1, 2))
+    if (gl_config.caps & QGL_CAP_TEXTURE_MAX_LEVEL)
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, maxlevel);
-#endif
 
-#ifdef GL_TEXTURE_LOD_BIAS
     // adjust LOD for resampled textures
     if (upload_width != width || upload_height != height) {
         float du    = upload_width / (float)width;
         float dv    = upload_height / (float)height;
         float bias  = -log(max(du, dv)) / M_LN2;
 
-        if (AT_LEAST_OPENGL(1, 4))
+        if (gl_config.caps & QGL_CAP_TEXTURE_LOD_BIAS)
             qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, bias);
     }
-#endif
 }
 
 static void GL_SetFilterAndRepeat(imagetype_t type, imageflags_t flags)
@@ -568,7 +635,7 @@ static void GL_SetFilterAndRepeat(imagetype_t type, imageflags_t flags)
             nearest = qfalse;
         }
 
-        if ((flags & IF_UPSCALED) && AT_LEAST_OPENGL(1, 2)) {
+        if ((flags & IF_UPSCALED) && (gl_config.caps & QGL_CAP_TEXTURE_MAX_LEVEL)) {
             if (nearest) {
                 qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
                 qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -587,26 +654,22 @@ static void GL_SetFilterAndRepeat(imagetype_t type, imageflags_t flags)
         }
     }
 
-    if (gl_config.ext_enabled & QGL_EXT_texture_filter_anisotropic) {
+    if (gl_config.caps & QGL_CAP_TEXTURE_ANISOTROPY) {
         if (type == IT_WALL || type == IT_SKIN)
-            qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, gl_filter_anisotropy);
+            qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, gl_filter_anisotropy);
         else
-            qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 1);
+            qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 1);
     }
 
     if (type == IT_WALL || type == IT_SKIN || (flags & IF_REPEAT)) {
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-#ifdef GL_CLAMP_TO_EDGE
-    } else if (AT_LEAST_OPENGL(1, 2) || AT_LEAST_OPENGL_ES(1, 0)) {
+    } else if (gl_config.caps & QGL_CAP_TEXTURE_CLAMP_TO_EDGE) {
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-#endif
-#ifdef GL_CLAMP
     } else {
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-#endif
     }
 }
 
@@ -686,12 +749,35 @@ void IMG_Unload(image_t *image)
     }
 }
 
+// for screenshots
+byte *IMG_ReadPixels(int *width, int *height, int *rowbytes)
+{
+    int align = 4;
+    int pitch;
+    byte *pixels;
+
+    qglGetIntegerv(GL_PACK_ALIGNMENT, &align);
+    pitch = ALIGN(r_config.width * 3, align);
+    pixels = Z_Malloc(pitch * r_config.height);
+
+    qglReadPixels(0, 0, r_config.width, r_config.height,
+                  GL_RGB, GL_UNSIGNED_BYTE, pixels);
+
+    *width = r_config.width;
+    *height = r_config.height;
+    *rowbytes = pitch;
+
+    return pixels;
+}
+
 static void GL_BuildIntensityTable(void)
 {
     int i, j;
     float f;
 
     f = Cvar_ClampValue(gl_intensity, 1, 5);
+    if (gl_static.use_shaders)
+        f = 1;
     for (i = 0; i < 256; i++) {
         j = i * f;
         if (j > 255) {
@@ -786,25 +872,42 @@ static void GL_InitParticleTexture(void)
     byte *dst;
     float x, y, f;
     int i, j;
+    int shape = Cvar_ClampInteger(gl_partshape, 0, 2);
+    int flags = IF_TRANSPARENT;
 
-    dst = pixels;
-    for (i = 0; i < 16; i++) {
-        for (j = 0; j < 16; j++) {
-            x = j - 16 / 2 + 0.5f;
-            y = i - 16 / 2 + 0.5f;
-            f = sqrt(x * x + y * y);
-            f = 1.0f - f / (16 / 2 - 0.5f);
-            dst[0] = 255;
-            dst[1] = 255;
-            dst[2] = 255;
-            dst[3] = 255 * clamp(f, 0, 1);
-            dst += 4;
+    if (shape == 0 || shape == 2) {
+        dst = pixels;
+        for (i = 0; i < 16; i++) {
+            for (j = 0; j < 16; j++) {
+                x = j - 16 / 2 + 0.5f;
+                y = i - 16 / 2 + 0.5f;
+                f = sqrt(x * x + y * y);
+                f = 1.0f - f / ((16 - shape) / 2 - 0.5f);
+                f *= 1 << shape;
+                dst[0] = 255;
+                dst[1] = 255;
+                dst[2] = 255;
+                dst[3] = 255 * clamp(f, 0, 1 - shape * 0.2f);
+                dst += 4;
+            }
+        }
+    } else {
+        flags |= IF_NEAREST;
+        memset(pixels, 0, sizeof(pixels));
+        for (i = 3; i <= 12; i++) {
+            for (j = 3; j <= 12; j++) {
+                dst = pixels + (i * 16 + j) * 4;
+                dst[0] = 255;
+                dst[1] = 255;
+                dst[2] = 255;
+                dst[3] = 255 * 0.6f;
+            }
         }
     }
 
     GL_ForceTexture(0, TEXNUM_PARTICLE);
-    GL_Upload32(pixels, 16, 16, 0, IT_SPRITE, IF_NONE);
-    GL_SetFilterAndRepeat(IT_SPRITE, IF_NONE);
+    GL_Upload32(pixels, 16, 16, 0, IT_SPRITE, flags);
+    GL_SetFilterAndRepeat(IT_SPRITE, flags);
 }
 
 static void GL_InitWhiteImage(void)
@@ -847,6 +950,11 @@ static void GL_InitBeamTexture(void)
     GL_SetFilterAndRepeat(IT_SPRITE, IF_NONE);
 }
 
+static void gl_partshape_changed(cvar_t *self)
+{
+    GL_InitParticleTexture();
+}
+
 /*
 ===============
 GL_InitImages
@@ -854,6 +962,8 @@ GL_InitImages
 */
 void GL_InitImages(void)
 {
+    GLint integer;
+
     gl_bilerp_chars = Cvar_Get("gl_bilerp_chars", "0", 0);
     gl_bilerp_chars->changed = gl_bilerp_chars_changed;
     gl_bilerp_pics = Cvar_Get("gl_bilerp_pics", "1", 0);
@@ -863,7 +973,6 @@ void GL_InitImages(void)
     gl_texturemode->changed = gl_texturemode_changed;
     gl_texturemode->generator = gl_texturemode_g;
     gl_texturebits = Cvar_Get("gl_texturebits", "0", CVAR_FILES);
-    gl_texture_non_power_of_two = Cvar_Get("gl_texture_non_power_of_two", "1", 0);
     gl_anisotropy = Cvar_Get("gl_anisotropy", "1", 0);
     gl_anisotropy->changed = gl_anisotropy_changed;
     gl_noscrap = Cvar_Get("gl_noscrap", "0", CVAR_FILES);
@@ -873,9 +982,11 @@ void GL_InitImages(void)
     gl_gamma_scale_pics = Cvar_Get("gl_gamma_scale_pics", "0", CVAR_FILES);
     gl_upscale_pcx = Cvar_Get("gl_upscale_pcx", "0", CVAR_FILES);
     gl_saturation = Cvar_Get("gl_saturation", "1", CVAR_FILES);
-    gl_intensity = Cvar_Get("intensity", "1", CVAR_FILES);
+    gl_intensity = Cvar_Get("intensity", "2", 0);
     gl_invert = Cvar_Get("gl_invert", "0", CVAR_FILES);
     gl_gamma = Cvar_Get("vid_gamma", "1", CVAR_ARCHIVE);
+    gl_partshape = Cvar_Get("gl_partshape", "0", 0);
+    gl_partshape->changed = gl_partshape_changed;
 
     if (r_config.flags & QVF_GAMMARAMP) {
         gl_gamma->changed = gl_gamma_changed;
@@ -884,11 +995,18 @@ void GL_InitImages(void)
         gl_gamma->flags |= CVAR_FILES;
     }
 
-    if (AT_LEAST_OPENGL(3, 0)) {
-        gl_texture_non_power_of_two->flags |= CVAR_FILES;
-    } else {
-        gl_texture_non_power_of_two->flags &= ~CVAR_FILES;
+    if (gl_static.use_shaders)
+        gl_intensity->flags &= ~CVAR_FILES;
+    else
+        gl_intensity->flags |= CVAR_FILES;
+
+    qglGetIntegerv(GL_MAX_TEXTURE_SIZE, &integer);
+
+    if (integer & (integer - 1)) {
+        integer = npot32(integer) >> 1;
     }
+
+    max_texture_size = min(integer, MAX_TEXTURE_SIZE);
 
     IMG_Init();
 
@@ -945,6 +1063,7 @@ void GL_ShutdownImages(void)
     gl_texturemode->generator = NULL;
     gl_anisotropy->changed = NULL;
     gl_gamma->changed = NULL;
+    gl_partshape->changed = NULL;
 
     // delete auto textures
     qglDeleteTextures(NUM_TEXNUMS, gl_static.texnums);
