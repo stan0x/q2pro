@@ -146,7 +146,7 @@ static void add_dynamic_lights(mface_t *surf)
 
         light = &glr.fd.dlights[i];
         dist = PlaneDiffFast(light->transformed, surf->plane);
-        rad = light->intensity - fabs(dist);
+        rad = light->intensity - fabsf(dist);
         if (rad < DLIGHT_CUTOFF)
             continue;
 
@@ -328,7 +328,7 @@ static void LM_InitBlock(void)
         lm.inuse[i] = 0;
     }
 
-    lm.dirty = qfalse;
+    lm.dirty = false;
 }
 
 static void LM_UploadBlock(void)
@@ -340,8 +340,8 @@ static void LM_UploadBlock(void)
     GL_ForceTexture(1, lm.texnums[lm.nummaps++]);
     qglTexImage2D(GL_TEXTURE_2D, 0, lm.comp, LM_BLOCK_WIDTH, LM_BLOCK_HEIGHT, 0,
                   GL_RGBA, GL_UNSIGNED_BYTE, lm.buffer);
-    qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    qglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    qglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
 static void build_style_map(int dynamic)
@@ -437,7 +437,7 @@ static void LM_BuildSurface(mface_t *surf, vec_t *vbo)
         }
     }
 
-    lm.dirty = qtrue;
+    lm.dirty = true;
 
     // store the surface lightmap parameters
     surf->light_s = s;
@@ -725,17 +725,17 @@ static void duplicate_surface_lmtc(mface_t *surf, vec_t *vbo)
     }
 }
 
-static qboolean create_surface_vbo(size_t size)
+static bool create_surface_vbo(size_t size)
 {
     GLuint buf = 0;
 
     if (!qglGenBuffers) {
-        return qfalse;
+        return false;
     }
 
 #if USE_GLES
     if (size > 65536 * VERTEX_SIZE * sizeof(vec_t)) {
-        return qfalse;
+        return false;
     }
 #endif
 
@@ -748,12 +748,12 @@ static qboolean create_surface_vbo(size_t size)
     if (GL_ShowErrors("Failed to create world model VBO")) {
         qglBindBuffer(GL_ARRAY_BUFFER, 0);
         qglDeleteBuffers(1, &buf);
-        return qfalse;
+        return false;
     }
 
     gl_static.world.vertices = NULL;
     gl_static.world.bufnum = buf;
-    return qtrue;
+    return true;
 }
 
 static void upload_surface_vbo(int lastvert)
@@ -818,8 +818,8 @@ static void upload_world_surfaces(void)
         qglBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    gl_fullbright->modified = qfalse;
-    gl_vertexlight->modified = qfalse;
+    gl_fullbright->modified = false;
+    gl_vertexlight->modified = false;
 }
 
 static void set_world_size(void)
@@ -890,7 +890,7 @@ void GL_LoadWorld(const char *name)
     bsp_t *bsp;
     mtexinfo_t *info;
     mface_t *surf;
-    qerror_t ret;
+    int ret;
     imageflags_t flags;
     int i;
 
@@ -931,7 +931,7 @@ void GL_LoadWorld(const char *name)
         else
             flags = IF_NONE;
 
-        Q_concat(buffer, sizeof(buffer), "textures/", info->name, ".wal", NULL);
+        Q_concat(buffer, sizeof(buffer), "textures/", info->name, ".wal");
         FS_NormalizePath(buffer, buffer);
         info->image = IMG_Find(buffer, IT_WALL, flags);
     }

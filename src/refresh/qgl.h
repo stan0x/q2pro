@@ -64,6 +64,7 @@ QGLAPI void (APIENTRYP qglStencilFunc)(GLenum func, GLint ref, GLuint mask);
 QGLAPI void (APIENTRYP qglStencilOp)(GLenum fail, GLenum zfail, GLenum zpass);
 QGLAPI void (APIENTRYP qglTexImage2D)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);
 QGLAPI void (APIENTRYP qglTexParameterf)(GLenum target, GLenum pname, GLfloat param);
+QGLAPI void (APIENTRYP qglTexParameteri)(GLenum target, GLenum pname, GLint param);
 QGLAPI void (APIENTRYP qglTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
 QGLAPI void (APIENTRYP qglViewport)(GLint x, GLint y, GLsizei width, GLsizei height);
 
@@ -132,6 +133,7 @@ QGLAPI const GLubyte *(APIENTRYP qglGetStringi)(GLenum name, GLuint index);
 // GL 3.1
 QGLAPI void (APIENTRYP qglBindBufferBase)(GLenum target, GLuint index, GLuint buffer);
 QGLAPI GLuint (APIENTRYP qglGetUniformBlockIndex)(GLuint program, const GLchar *uniformBlockName);
+QGLAPI void (APIENTRYP qglGetActiveUniformBlockiv)(GLuint program, GLuint uniformBlockIndex, GLenum pname, GLint *params);
 QGLAPI void (APIENTRYP qglUniformBlockBinding)(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding);
 
 // GL 4.1
@@ -149,7 +151,7 @@ QGLAPI void (APIENTRYP qglProgramStringARB)(GLenum target, GLenum format, GLsize
 QGLAPI void (APIENTRYP qglLockArraysEXT)(GLint first, GLsizei count);
 QGLAPI void (APIENTRYP qglUnlockArraysEXT)(void);
 
-qboolean QGL_Init(void);
+bool QGL_Init(void);
 void QGL_Shutdown(void);
 
 #endif  // QGL_H

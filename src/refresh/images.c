@@ -39,10 +39,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <jpeglib.h>
 #endif
 
+#include <setjmp.h>
+
 #define R_COLORMAP_PCX    "pics/colormap.pcx"
 
 #define IMG_LOAD(x) \
-    static qerror_t IMG_Load##x(byte *rawdata, size_t rawlen, \
+    static int IMG_Load##x(byte *rawdata, size_t rawlen, \
         image_t *image, byte **pic)
 
 typedef struct screenshot_s {
@@ -51,7 +53,7 @@ typedef struct screenshot_s {
     FILE *fp;
     char *filename;
     int width, height, row_stride, status, param;
-    qboolean async;
+    bool async;
 } screenshot_t;
 
 /*
@@ -129,8 +131,8 @@ PCX LOADING
 =================================================================
 */
 
-static qerror_t _IMG_LoadPCX(byte *rawdata, size_t rawlen, byte *pixels,
-                             byte *palette, int *width, int *height)
+static int _IMG_LoadPCX(byte *rawdata, size_t rawlen, byte *pixels,
+                        byte *palette, int *width, int *height)
 {
     byte    *raw, *end;
     dpcx_t  *pcx;
@@ -227,13 +229,13 @@ IMG_Unpack8
 static int IMG_Unpack8(uint32_t *out, const uint8_t *in, int width, int height)
 {
     int         x, y, p;
-    qboolean    has_alpha = qfalse;
+    bool        has_alpha = false;
 
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
             p = *in;
             if (p == 255) {
-                has_alpha = qtrue;
+                has_alpha = true;
                 // transparent, so scan around for another color
                 // to avoid alpha fringes
                 if (y > 0 && *(in - width) != 255)
@@ -272,9 +274,8 @@ static int IMG_Unpack8(uint32_t *out, const uint8_t *in, int width, int height)
 
 IMG_LOAD(PCX)
 {
-    byte        buffer[640 * 480];
-    int         w, h;
-    qerror_t    ret;
+    byte    buffer[640 * 480];
+    int     w, h, ret;
 
     ret = _IMG_LoadPCX(rawdata, rawlen, buffer, NULL, &w, &h);
     if (ret < 0)
@@ -348,9 +349,9 @@ TARGA IMAGES
 #define TARGA_HEADER_SIZE  18
 
 #define TGA_DECODE(x) \
-    static qerror_t tga_decode_##x(byte *in, byte **row_pointers, int cols, int rows, byte *max_in)
+    static int tga_decode_##x(byte *in, byte **row_pointers, int cols, int rows, byte *max_in)
 
-typedef qerror_t (*tga_decode_t)(byte *, byte **, int, int, byte *);
+typedef int (*tga_decode_t)(byte *, byte **, int, int, byte *);
 
 TGA_DECODE(bgr)
 {
@@ -519,7 +520,7 @@ IMG_LOAD(TGA)
     byte *row_pointers[MAX_TEXTURE_SIZE];
     unsigned i, bpp, id_length, colormap_type, image_type, w, h, pixel_size, attributes;
     tga_decode_t decode;
-    qerror_t ret;
+    int ret;
 
     if (rawlen < TARGA_HEADER_SIZE) {
         return Q_ERR_FILE_TOO_SMALL;
@@ -620,7 +621,7 @@ static int IMG_SaveTGA(screenshot_t *s)
     header[16] = 24;     // pixel size
 
     if (!fwrite(&header, sizeof(header), 1, s->fp)) {
-        return -errno;
+        return Q_ERR_FAILURE;
     }
 
     // swap RGB to BGR
@@ -639,12 +640,12 @@ static int IMG_SaveTGA(screenshot_t *s)
 
     if (s->row_stride == s->width * 3) {
         if (!fwrite(s->pixels, s->width * s->height * 3, 1, s->fp)) {
-            return -errno;
+            return Q_ERR_FAILURE;
         }
     } else {
         for (i = 0; i < s->height; i++) {
             if (!fwrite(s->pixels + i * s->row_stride, s->width * 3, 1, s->fp)) {
-                return -errno;
+                return Q_ERR_FAILURE;
             }
         }
     }
@@ -1113,7 +1114,7 @@ static int create_screenshot(char *buffer, size_t size, FILE **f,
     int i, ret;
 
     if (Q_snprintf(temp, sizeof(temp), "%s/screenshots/", fs_gamedir) >= sizeof(temp)) {
-        return -ENAMETOOLONG;
+        return Q_ERR(ENAMETOOLONG);
     }
     if ((ret = FS_CreatePath(temp)) < 0) {
         return ret;
@@ -1122,14 +1123,14 @@ static int create_screenshot(char *buffer, size_t size, FILE **f,
     if (name && *name) {
         // save to user supplied name
         if (FS_NormalizePathBuffer(temp, name, sizeof(temp)) >= sizeof(temp)) {
-            return -ENAMETOOLONG;
+            return Q_ERR(ENAMETOOLONG);
         }
         FS_CleanupPath(temp);
         if (Q_snprintf(buffer, size, "%s/screenshots/%s%s", fs_gamedir, temp, ext) >= size) {
-            return -ENAMETOOLONG;
+            return Q_ERR(ENAMETOOLONG);
         }
         if (!(*f = fopen(buffer, "wb"))) {
-            return -errno;
+            return Q_ERRNO;
         }
         return 0;
     }
@@ -1137,13 +1138,14 @@ static int create_screenshot(char *buffer, size_t size, FILE **f,
     // find a file name to save it to
     for (i = 0; i < 1000; i++) {
         if (Q_snprintf(buffer, size, "%s/screenshots/quake%03d%s", fs_gamedir, i, ext) >= size) {
-            return -ENAMETOOLONG;
+            return Q_ERR(ENAMETOOLONG);
         }
         if ((*f = Q_fopen(buffer, "wxb"))) {
             return 0;
         }
-        if (errno != EEXIST) {
-            return -errno;
+        ret = Q_ERRNO;
+        if (ret != Q_ERR(EEXIST)) {
+            return ret;
         }
     }
 
@@ -1160,7 +1162,8 @@ static void screenshot_done_cb(void *arg)
 {
     screenshot_t *s = arg;
 
-    fclose(s->fp);
+    if (fclose(s->fp) && !s->status)
+        s->status = Q_ERRNO;
     Z_Free(s->pixels);
 
     if (s->status < 0) {
@@ -1178,7 +1181,7 @@ static void screenshot_done_cb(void *arg)
 
 static void make_screenshot(const char *name, const char *ext,
                             int (*save_cb)(struct screenshot_s *),
-                            qboolean async, int param)
+                            bool async, int param)
 {
     char        buffer[MAX_OSPATH];
     byte        *pixels;
@@ -1270,7 +1273,7 @@ static void IMG_ScreenShot_f(void)
 #endif // USE_JPG || USE_PNG
 
 #if USE_TGA
-    make_screenshot(NULL, ".tga", IMG_SaveTGA, qfalse, 0);
+    make_screenshot(NULL, ".tga", IMG_SaveTGA, false, 0);
 #else
     Com_Printf("Can't take screenshot, TGA format not available.\n");
 #endif
@@ -1293,7 +1296,7 @@ static void IMG_ScreenShotTGA_f(void)
         return;
     }
 
-    make_screenshot(Cmd_Argv(1), ".tga", IMG_SaveTGA, qfalse, 0);
+    make_screenshot(Cmd_Argv(1), ".tga", IMG_SaveTGA, false, 0);
 }
 #endif
 
@@ -1357,8 +1360,8 @@ int         r_numImages;
 uint32_t    d_8to24table[256];
 
 static const struct {
-    char        ext[4];
-    qerror_t    (*load)(byte *, size_t, image_t *, byte **);
+    char    ext[4];
+    int     (*load)(byte *, size_t, image_t *, byte **);
 } img_loaders[IM_MAX] = {
     { "pcx", IMG_LoadPCX },
     { "wal", IMG_LoadWAL },
@@ -1462,9 +1465,8 @@ static image_t *lookup_image(const char *name,
 
 static int _try_image_format(imageformat_t fmt, image_t *image, byte **pic)
 {
-    byte        *data;
-    ssize_t     len;
-    qerror_t    ret;
+    byte    *data;
+    int     len, ret;
 
     // load the file
     len = FS_LoadFile(image->name, (void **)&data);
@@ -1494,8 +1496,7 @@ static int try_image_format(imageformat_t fmt, image_t *image, byte **pic)
 static int try_other_formats(imageformat_t orig, image_t *image, byte **pic)
 {
     imageformat_t   fmt;
-    qerror_t        ret;
-    int             i;
+    int             i, ret;
 
     // search through all the 32-bit formats
     for (i = 0; i < img_total; i++) {
@@ -1522,7 +1523,7 @@ static int try_other_formats(imageformat_t orig, image_t *image, byte **pic)
 static void get_image_dimensions(imageformat_t fmt, image_t *image)
 {
     char        buffer[MAX_QPATH];
-    ssize_t     len;
+    int         len;
     miptex_t    mt;
     dpcx_t      pcx;
     qhandle_t   f;
@@ -1603,15 +1604,15 @@ static void r_texture_formats_changed(cvar_t *self)
 #endif // USE_PNG || USE_JPG || USE_TGA
 
 // finds or loads the given image, adding it to the hash table.
-static qerror_t find_or_load_image(const char *name, size_t len,
-                                   imagetype_t type, imageflags_t flags,
-                                   image_t **image_p)
+static int find_or_load_image(const char *name, size_t len,
+                              imagetype_t type, imageflags_t flags,
+                              image_t **image_p)
 {
     image_t         *image;
     byte            *pic;
     unsigned        hash;
     imageformat_t   fmt;
-    qerror_t        ret;
+    int             ret;
 
     *image_p = NULL;
 
@@ -1707,7 +1708,7 @@ image_t *IMG_Find(const char *name, imagetype_t type, imageflags_t flags)
 {
     image_t *image;
     size_t len;
-    qerror_t ret;
+    int ret;
 
     if (!name) {
         Com_Error(ERR_FATAL, "%s: NULL", __func__);
@@ -1752,12 +1753,12 @@ R_RegisterImage
 ===============
 */
 qhandle_t R_RegisterImage(const char *name, imagetype_t type,
-                          imageflags_t flags, qerror_t *err_p)
+                          imageflags_t flags, int *err_p)
 {
     image_t     *image;
     char        fullname[MAX_QPATH];
     size_t      len;
-    qerror_t    err;
+    int         err;
 
     // empty names are legal, silently ignore them
     if (!*name) {
@@ -1778,13 +1779,11 @@ qhandle_t R_RegisterImage(const char *name, imagetype_t type,
     } else if (*name == '/' || *name == '\\') {
         len = FS_NormalizePathBuffer(fullname, name + 1, sizeof(fullname));
     } else {
-        len = Q_concat(fullname, sizeof(fullname), "pics/", name, NULL);
-        if (len >= sizeof(fullname)) {
-            err = Q_ERR_NAMETOOLONG;
-            goto fail;
+        len = Q_concat(fullname, sizeof(fullname), "pics/", name);
+        if (len < sizeof(fullname)) {
+            FS_NormalizePath(fullname, fullname);
+            len = COM_DefaultExtension(fullname, ".pcx", sizeof(fullname));
         }
-        FS_NormalizePath(fullname, fullname);
-        len = COM_DefaultExtension(fullname, ".pcx", sizeof(fullname));
     }
 
     if (len >= sizeof(fullname)) {
@@ -1814,7 +1813,7 @@ fail:
 R_GetPicSize
 =============
 */
-qboolean R_GetPicSize(int *w, int *h, qhandle_t pic)
+bool R_GetPicSize(int *w, int *h, qhandle_t pic)
 {
     image_t *image = IMG_ForHandle(pic);
 
@@ -1824,7 +1823,7 @@ qboolean R_GetPicSize(int *w, int *h, qhandle_t pic)
     if (h) {
         *h = image->height;
     }
-    return !!(image->flags & IF_TRANSPARENT);
+    return image->flags & IF_TRANSPARENT;
 }
 
 /*
@@ -1900,9 +1899,7 @@ R_GetPalette
 void IMG_GetPalette(void)
 {
     byte        pal[768], *src, *data;
-    qerror_t    ret;
-    ssize_t     len;
-    int         i;
+    int         i, ret, len;
 
     // get the palette
     len = FS_LoadFile(R_COLORMAP_PCX, (void **)&data);
